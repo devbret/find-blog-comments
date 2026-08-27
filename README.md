@@ -4,7 +4,7 @@ A web-crawling utility which automatically identifies and logs external links co
 
 ## Application Overview
 
-A web crawler designed to identify external websites featuring active comment sections. It begins by crawling a specified root URL and exploring internal pages within the same domain up to a specified limit. During this initial phase, the script extracts all unique external links found on those internal pages while incorporating delays and timeouts to help ensure polite network requests.
+Designed to identify external websites featuring active comment sections. It begins by crawling a specified root URL and exploring internal pages within the same domain up to a specified limit. During this initial phase, the script extracts all unique external links found on those internal pages while incorporating delays and timeouts to help ensure polite network requests.
 
 Once the list of external links is compiled, the script analyzes each one specifically for evidence of comment functionality. It uses a layered detection strategy to check for known third-party commenting platforms, specific HTML attributes and common phrases. If an external page is determined to have a comment section based on these indicators, its URL is recorded and saved to a local text file.
 
@@ -40,6 +40,10 @@ Below are the required software programs and instructions for installing and usi
 
 ## Other Considerations
 
+This section gathers context which is outside of installing and running the application. The first subsection outlines specific capabilities this repository is meant to showcase. While the second covers licensing. Followed by information on how to contact the maintainer with suggestions, questions and collaboration opportunities.
+
+### Abilities Demonstrated
+
 This project repo is intended to demonstrate an ability to do the following:
 
 - Crawl a specified website's internal pages to identify and collect unique external links
@@ -49,5 +53,9 @@ This project repo is intended to demonstrate an ability to do the following:
 - Look for evidence of third-party commenting tools like Disqus, Commento and others
 
 - Generate a text file containing the URLs of all external pages that were confirmed to have comments
+
+### License Information
+
+This repository is distributed under the [MIT License](LICENSE). You are free to use, copy, modify, merge, publish, distribute, sublicense and sell copies of this software, including as part of proprietary or commercial work. The single condition is the copyright and permission notices contained in the LICENSE file must be included with any copy or substantial portion of the software that you redistribute. The software is provided "as is", without warranty of any kind, and the copyright holder is not liable for any claim or damages arising from its use.
 
 If you have any questions or would like to collaborate, please reach out either on GitHub or via [my website](https://bretbernhoft.com/).
