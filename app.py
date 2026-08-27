@@ -6,46 +6,192 @@ from collections import deque
 from urllib.parse import urljoin, urlparse, urldefrag
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
-COMMENT_PLATFORM_HINTS = (
-    "disqus.com",
-    "disqus_thread",
-    "disquscdn",
-    "commento",
-    "commento.io",
-    "hyvor",
-    "talkyard",
-    "remark42",
-    "isso",
-    "graphcomment",
-    "fastcomments",
-    "utteranc.es",
-    "giscus",
-    "facebook.com/plugins/comments",
-    "fb-comments",
-    "intensedebate.com",
-    "livefyre",
-    "spot.im",
-    "openweb",
-    "coral.coralproject",
-    "coral-talk",
-    "wpdiscuz",
+COMMENT_PLATFORMS = (
+    (
+        "Disqus",
+        ("disqus.com", "disquscdn.com"),
+        ("disqus_thread", "disqus-thread", "disqus"),
+    ),
+    (
+        "Commento",
+        ("commento.io", "commento.js", "comentario"),
+        ("commento", "comentario"),
+    ),
+    (
+        "Hyvor Talk",
+        ("talk.hyvor.com",),
+        ("hyvor-talk-comments", "hyvor-talk", "hyvortalk"),
+    ),
+    ("Talkyard", ("talkyard.net", "talkyard.io"), ("talkyard-comments", "ed-comments")),
+    ("Remark42", ("remark42",), ("remark42",)),
+    ("Isso", ("isso.js", "isso.min.js", "/isso/"), ("isso-thread", "isso_thread")),
+    ("GraphComment", ("graphcomment.com",), ("graphcomment",)),
+    ("FastComments", ("fastcomments.com",), ("fastcomments",)),
+    ("utterances", ("utteranc.es",), ("utterances", "utterances-frame")),
+    ("giscus", ("giscus.app",), ("giscus", "giscus-frame")),
+    ("Facebook Comments", ("facebook.com/plugins/comments",), ("fb-comments",)),
+    ("IntenseDebate", ("intensedebate.com",), ("intensedebate", "idc-container")),
+    ("Livefyre", ("livefyre.com",), ("livefyre",)),
+    (
+        "OpenWeb / Spot.IM",
+        ("spot.im", "openweb.com", "spotim"),
+        ("spotim", "spot-im", "ow-comments"),
+    ),
+    (
+        "Coral",
+        ("coralproject.net", "coral-talk"),
+        ("coral_thread", "coral-talk", "coralstreamembed"),
+    ),
+    ("wpDiscuz", ("wpdiscuz",), ("wpdiscuz", "wpdcom", "wpd-thread")),
+    ("Cusdis", ("cusdis.com",), ("cusdis_thread", "cusdis")),
+    ("Waline", ("waline",), ("waline", "wl-comment")),
+    ("Twikoo", ("twikoo",), ("twikoo", "tk-comments")),
+    ("Gitalk", ("gitalk",), ("gitalk", "gitalk-container")),
+    ("Vuukle", ("vuukle.com",), ("vuukle",)),
+    ("Muut", ("muut.com",), ("muut",)),
+    ("HyperComments", ("hypercomments.com",), ("hypercomments",)),
+    ("Viafoura", ("viafoura.co", "viafoura.net"), ("viafoura", "vf-conversations")),
 )
+
+EMBED_TAGS = ("script", "iframe", "link")
 
 COMMENT_CONTAINER_HINTS = (
     "comment",
     "comments",
-    "comment-list",
     "commentlist",
-    "comment-section",
-    "comments-section",
-    "comment-area",
-    "comments-area",
+    "commentform",
     "respond",
     "discussion",
     "responses",
 )
+
+COMMENT_ITEM_HINTS = ("comment",)
+COMMENT_ITEM_TAGS = ("li", "article", "div", "section")
+COMMENT_ITEM_EXCLUDE = (
+    "comment-form",
+    "commentform",
+    "comment-respond",
+    "respond",
+    "comment-reply",
+    "comment-reply-link",
+    "comment-reply-title",
+    "comment-notes",
+    "comment-count",
+    "comments-count",
+    "comments-link",
+    "comment-policy",
+    "comment-awaiting-moderation",
+)
+COMMENT_ITEM_MIN_TEXT = 20
+
+COMMENT_FORM_HINTS = ("comment", "comments", "commentform", "respond", "reply")
+
+COMMENT_PHRASES = (
+    "leave a comment",
+    "leave a reply",
+    "post a comment",
+    "add a comment",
+    "write a comment",
+    "add your comment",
+    "join the discussion",
+)
+
+COMMENT_CLOSED_PHRASES = (
+    "comments are closed",
+    "comments are now closed",
+    "comments have been closed",
+    "comments are disabled",
+    "comments have been disabled",
+    "commenting is disabled",
+    "commenting has been disabled",
+    "commenting is closed",
+    "commenting has been turned off",
+    "comments are turned off",
+    "comments are off for this",
+    "comments are not allowed",
+    "closed for comments",
+    "comment section is closed",
+    "discussion is closed",
+)
+
+COMMENT_EMPTY_PHRASES = (
+    "no comments yet",
+    "be the first to comment",
+    "be the first to leave a comment",
+)
+
+SCORE_PLATFORM = 100
+SCORE_CONTAINER_STRONG = 60
+SCORE_CONTAINER_WEAK = 25
+SCORE_COMMENT_FORM = 60
+SCORE_SCHEMA = 60
+SCORE_COUNT_NONZERO = 40
+SCORE_COUNT_ZERO = 30
+SCORE_PHRASE = 30
+SCORE_HEADING = 30
+COMMENT_SCORE_THRESHOLD = 60
+
+_COUNT_PATTERNS = (
+    re.compile(r"\b(\d[\d,]*)\s+comments?\b"),
+    re.compile(r"\bcomments?\s*\(\s*(\d[\d,]*)\s*\)"),
+    re.compile(r"\bcomments?\s*:\s*(\d[\d,]*)\b"),
+)
+
+_HEADING_RE = re.compile(
+    r"^(?:\d[\d,]*\s+)?(?:comments?|responses|discussion|replies)"
+    r"(?:\s*\(\s*\d[\d,]*\s*\))?$"
+)
+
+_SCHEMA_COMMENT_RE = re.compile(r"\bcomment\b", re.I)
+
+_NON_TEXT_TAGS = frozenset(
+    {"script", "style", "noscript", "template", "head", "title", "meta", "link"}
+)
+
+
+def _attr_text(value):
+    if not value:
+        return ""
+
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v) for v in value).lower()
+
+    return str(value).lower()
+
+
+def _ident(tag):
+    parts = []
+
+    if tag.name and "-" in tag.name:
+        parts.append(tag.name.lower())
+
+    parts.append(_attr_text(tag.get("id")))
+    parts.append(_attr_text(tag.get("class")))
+
+    return " ".join(p for p in parts if p)
+
+
+def _visible_text(soup):
+    parts = []
+
+    for string in soup.find_all(string=True):
+        if type(string) is not NavigableString:
+            continue
+
+        parent = string.parent.name if string.parent else ""
+
+        if parent in _NON_TEXT_TAGS:
+            continue
+
+        text = string.strip()
+
+        if text:
+            parts.append(text)
+
+    return " ".join(" ".join(parts).split()).lower()
+
 
 COMMENT_FALSE_POSITIVES = (
     "no-comments",
@@ -53,7 +199,107 @@ COMMENT_FALSE_POSITIVES = (
     "comments-closed",
     "comment-closed",
     "comments-disabled",
+    "comments-off",
 )
+
+HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+
+def _compile_tokens(tokens):
+    ordered = sorted(tokens, key=len, reverse=True)
+    alternation = "|".join(re.escape(token) for token in ordered)
+
+    return re.compile(rf"(^|[\s_\-])({alternation})([\s_\-]|$)")
+
+
+def _token_match(pattern, ident):
+    match = pattern.search(ident) if ident else None
+
+    return match.group(2) if match else None
+
+
+def _collapse(text):
+    return " ".join(text.split()).lower()
+
+
+_PLATFORM_PATTERNS = tuple(
+    (name, fragments, _compile_tokens(tokens))
+    for name, fragments, tokens in COMMENT_PLATFORMS
+)
+_CONTAINER_RE = _compile_tokens(COMMENT_CONTAINER_HINTS)
+_ITEM_RE = _compile_tokens(COMMENT_ITEM_HINTS)
+_ITEM_EXCLUDE_RE = _compile_tokens(COMMENT_ITEM_EXCLUDE)
+_FORM_RE = _compile_tokens(COMMENT_FORM_HINTS)
+_FALSE_POSITIVE_RE = _compile_tokens(COMMENT_FALSE_POSITIVES)
+
+
+def _schema_comment(tag):
+    for attr in ("itemprop", "itemtype", "typeof", "role"):
+        value = _attr_text(tag.get(attr))
+
+        if value and _SCHEMA_COMMENT_RE.search(value):
+            return True
+
+    return False
+
+
+def _is_comment_item(tag):
+    if tag.name not in COMMENT_ITEM_TAGS:
+        return False
+
+    ident = _ident(tag)
+
+    if not _token_match(_ITEM_RE, ident):
+        return False
+
+    if _token_match(_ITEM_EXCLUDE_RE, ident):
+        return False
+
+    return len(tag.get_text(" ", strip=True)) >= COMMENT_ITEM_MIN_TEXT
+
+
+def _container_evidence(tag):
+    if tag.find("textarea"):
+        return SCORE_CONTAINER_STRONG, "with a reply box"
+
+    if tag.find(_is_comment_item):
+        return SCORE_CONTAINER_STRONG, "with posted comments"
+
+    if tag.find(["li", "article", "p"]):
+        return SCORE_CONTAINER_WEAK, "with unidentified content"
+
+    return 0, ""
+
+
+def _comment_form_hint(form):
+    textarea = form.find("textarea")
+
+    if textarea is None:
+        return None
+
+    own = " ".join(
+        part
+        for part in (
+            _ident(form),
+            _attr_text(form.get("action")),
+            _attr_text(form.get("name")),
+            _ident(textarea),
+            _attr_text(textarea.get("name")),
+        )
+        if part
+    )
+
+    hint = _token_match(_FORM_RE, own)
+
+    if hint:
+        return hint
+
+    placeholder = _attr_text(textarea.get("placeholder"))
+
+    if "comment" in placeholder or "reply" in placeholder:
+        return "placeholder"
+
+    return None
 
 
 class CommentFinder:
@@ -158,67 +404,98 @@ class CommentFinder:
         return links
 
     def detect_comments(self, soup):
-        html = str(soup).lower()
+        text = _visible_text(soup)
 
-        for hint in COMMENT_PLATFORM_HINTS:
-            if hint in html:
-                return True, f"platform/widget: {hint}"
+        for phrase in COMMENT_CLOSED_PHRASES:
+            if phrase in text:
+                return False, f"comments closed: {phrase!r}"
 
-        for tag in soup.find_all(attrs={"id": True}) + soup.find_all(
-            attrs={"class": True}
-        ):
-            ident = " ".join(
-                filter(
-                    None,
-                    [
-                        tag.get("id", ""),
-                        " ".join(tag.get("class", []))
-                        if isinstance(tag.get("class"), list)
-                        else tag.get("class", ""),
-                    ],
-                )
-            ).lower()
+        signals = {}
 
-            if not ident:
-                continue
+        def record(category, score, label):
+            if score > signals.get(category, (0, ""))[0]:
+                signals[category] = (score, label)
 
-            if any(fp in ident for fp in COMMENT_FALSE_POSITIVES):
-                continue
+        self._scan_elements(soup, record)
+        self._scan_text(text, record)
 
-            for hint in COMMENT_CONTAINER_HINTS:
-                if re.search(rf"(^|[\s_\-]){re.escape(hint)}([\s_\-]|$)", ident):
-                    if tag.find("form") or tag.find("textarea") or len(
-                        tag.find_all(["li", "article", "p"])
-                    ) >= 1:
-                        return True, f"container id/class: {hint}"
+        total = sum(score for score, _ in signals.values())
 
-        for form in soup.find_all("form"):
-            form_id = (
-                form.get("id", "") + " " + " ".join(form.get("class", []) or [])
-            ).lower()
+        if total < COMMENT_SCORE_THRESHOLD:
+            return False, f"score {total}" if total else ""
 
-            if form.find("textarea") and (
-                "comment" in form_id or "respond" in form_id or "comment" in html
-            ):
-                if (
-                    "leave a comment" in html
-                    or "post a comment" in html
-                    or "comment" in form_id
-                ):
-                    return True, "comment form with textarea"
+        ranked = sorted(signals.values(), reverse=True)
+        reasons = ", ".join(label for _, label in ranked)
 
-        for phrase in (
-            "leave a comment",
-            "leave a reply",
-            "post a comment",
-            "0 comments",
-            "comments (",
-            "join the discussion",
-        ):
-            if phrase in html:
-                return True, f"phrase: {phrase!r}"
+        return True, f"score {total}: {reasons}"
 
-        return False, ""
+    @staticmethod
+    def _scan_elements(soup, record):
+        for tag in soup.find_all(True):
+            ident = _ident(tag)
+
+            urls = " ".join(
+                _attr_text(value)
+                for name, value in tag.attrs.items()
+                if name.startswith("data-")
+                or (name in ("src", "href") and tag.name in EMBED_TAGS)
+            )
+
+            for name, fragments, token_re in _PLATFORM_PATTERNS:
+                if urls and any(fragment in urls for fragment in fragments):
+                    record("platform", SCORE_PLATFORM, f"platform: {name}")
+                    break
+
+                if _token_match(token_re, ident):
+                    record("platform", SCORE_PLATFORM, f"platform: {name}")
+                    break
+
+            if _schema_comment(tag):
+                record("schema", SCORE_SCHEMA, "schema.org Comment markup")
+
+            if tag.name in HEADING_TAGS:
+                heading = _collapse(tag.get_text(" ", strip=True))
+
+                if _HEADING_RE.match(heading):
+                    record("heading", SCORE_HEADING, f"heading: {heading!r}")
+
+            if tag.name == "form":
+                form_hint = _comment_form_hint(tag)
+
+                if form_hint:
+                    record("form", SCORE_COMMENT_FORM, f"comment form ({form_hint})")
+
+            hint = _token_match(_CONTAINER_RE, ident)
+
+            if hint and not _token_match(_FALSE_POSITIVE_RE, ident):
+                score, detail = _container_evidence(tag)
+
+                if score:
+                    record("container", score, f"container {hint!r} {detail}")
+
+    @staticmethod
+    def _scan_text(text, record):
+        for phrase in COMMENT_PHRASES:
+            if phrase in text:
+                record("phrase", SCORE_PHRASE, f"phrase: {phrase!r}")
+                break
+
+        count = None
+
+        for pattern in _COUNT_PATTERNS:
+            for match in pattern.finditer(text):
+                value = int(match.group(1).replace(",", ""))
+                count = value if count is None else max(count, value)
+
+        if count:
+            record("count", SCORE_COUNT_NONZERO, f"{count} comments listed")
+        elif count == 0:
+            record("count", SCORE_COUNT_ZERO, "empty comment section")
+
+        for phrase in COMMENT_EMPTY_PHRASES:
+            if phrase in text:
+                record("count", SCORE_COUNT_ZERO, f"phrase: {phrase!r}")
+                break
 
     def crawl_internal(self):
         self._log(
