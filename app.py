@@ -140,9 +140,11 @@ _COUNT_PATTERNS = (
 )
 
 _HEADING_RE = re.compile(
-    r"^(?:\d[\d,]*\s+)?(?:comments?|responses|discussion|replies)"
-    r"(?:\s*\(\s*\d[\d,]*\s*\))?$"
+    r"^(?P<lead>\d[\d,]*\s+)?(?P<word>comments?|responses|discussion|replies)"
+    r"(?P<trail>\s*\(\s*\d[\d,]*\s*\))?$"
 )
+
+_COUNT_REQUIRED_HEADINGS = frozenset({"discussion"})
 
 _SCHEMA_COMMENT_RE = re.compile(r"\bcomment\b", re.I)
 
@@ -220,6 +222,18 @@ def _token_match(pattern, ident):
 
 def _collapse(text):
     return " ".join(text.split()).lower()
+
+
+def _is_comment_heading(heading):
+    match = _HEADING_RE.match(heading)
+
+    if not match:
+        return False
+
+    if match.group("word") in _COUNT_REQUIRED_HEADINGS:
+        return bool(match.group("lead") or match.group("trail"))
+
+    return True
 
 
 _PLATFORM_PATTERNS = tuple(
@@ -456,7 +470,7 @@ class CommentFinder:
             if tag.name in HEADING_TAGS:
                 heading = _collapse(tag.get_text(" ", strip=True))
 
-                if _HEADING_RE.match(heading):
+                if _is_comment_heading(heading):
                     record("heading", SCORE_HEADING, f"heading: {heading!r}")
 
             if tag.name == "form":
